@@ -19,21 +19,13 @@
 
 #include "RestrictedCallouts.h"
 
-#include "gcrhinterface.h"
-
-#include "slist.h"
 #include "varint.h"
 #include "regdisplay.h"
 #include "StackFrameIterator.h"
 
 #include "thread.h"
 
-#include "shash.h"
-#include "RWLock.h"
-#include "module.h"
-#include "RuntimeInstance.h"
 #include "objecthandle.h"
-#include "eetype.inl"
 #include "RhConfig.h"
 
 #include "threadstore.h"
@@ -43,12 +35,9 @@
 #include "gcdesc.h"
 #include "SyncClean.hpp"
 
-#include "daccess.h"
-
 #include "GCMemoryHelpers.h"
 
 #include "holder.h"
-#include "Volatile.h"
 
 #ifdef FEATURE_ETW
     #ifndef _INC_WINDOWS
