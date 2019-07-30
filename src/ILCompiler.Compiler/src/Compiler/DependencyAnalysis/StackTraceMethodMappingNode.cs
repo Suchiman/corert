@@ -18,8 +18,11 @@ namespace ILCompiler.DependencyAnalysis
     {
         public StackTraceMethodMappingNode()
         {
+            _emitSequencePoints = true;
             _endSymbol = new ObjectAndOffsetSymbolNode(this, 0, "_stacktrace_methodRVA_to_token_mapping_End", true);
         }
+
+        private readonly bool _emitSequencePoints;
 
         private ObjectAndOffsetSymbolNode _endSymbol;
         public ISymbolDefinitionNode EndSymbol => _endSymbol;
@@ -80,12 +83,18 @@ namespace ILCompiler.DependencyAnalysis
                 return offset;
             }
 
+            int totalSequencePoints = 0;
             ObjectDataBuilder sequencePointsBuilder = new ObjectDataBuilder(factory, relocsOnly);
             foreach (var mappingEntry in mappingEntries)
             {
                 IMethodNode entryPoint = factory.MethodEntrypoint(mappingEntry.Entity);
                 objData.EmitReloc(entryPoint, reloc);
                 objData.EmitInt(mappingEntry.MetadataHandle);
+
+                if (!_emitSequencePoints)
+                {
+                    continue;
+                }
 
                 var debug = entryPoint as INodeWithDebugInfo;
                 int debugLocLength = debug?.DebugLocInfos?.Length ?? 0;
@@ -105,6 +114,8 @@ namespace ILCompiler.DependencyAnalysis
                 var consecutiveLength = sequencePointsBuilder.ReserveInt(); // length of current same-file consecutive debugLocs
                 sequencePointsBuilder.EmitInt(GetOrAddStringToHeap(fileName)); // offset to current fileName on string heap
 
+                int previousLine = 0;
+                int previousOffset = 0;
                 int blockCounter = 1;
                 int consecutiveCounter = 0;
                 foreach (var loc in debug.DebugLocInfos)
@@ -121,25 +132,39 @@ namespace ILCompiler.DependencyAnalysis
                         sequencePointsBuilder.EmitInt(GetOrAddStringToHeap(fileName)); // offset to fileName on string heap
                     }
 
-                    sequencePointsBuilder.EmitInt(loc.NativeOffset);
-                    sequencePointsBuilder.EmitInt(loc.LineNumber);
+                    sequencePointsBuilder.EmitCompressedUInt((uint)(loc.NativeOffset - previousOffset));
+                    sequencePointsBuilder.EmitCompressedInt(loc.LineNumber - previousLine);
+                    previousLine = loc.LineNumber;
+                    previousOffset = loc.NativeOffset;
                     consecutiveCounter++;
+                    totalSequencePoints++;
                 }
 
                 sequencePointsBuilder.EmitInt(blockCount, blockCounter);
                 sequencePointsBuilder.EmitInt(consecutiveLength, consecutiveCounter);
             }
 
-            objData.EmitInt(reservedSequencePointsOffset, objData.CountBytes);
-            objData.EmitBytes(sequencePointsBuilder.ToObjectData().Data);
-
-            objData.EmitInt(reservedStringOffset, objData.CountBytes);
-            foreach (var kvp in fileNameToOffset.OrderBy(x => x.Value))
+            if (_emitSequencePoints)
             {
-                var bytes = Encoding.UTF8.GetBytes(kvp.Key);
-                objData.EmitInt(bytes.Length);
-                objData.EmitBytes(bytes);
+                objData.EmitInt(reservedSequencePointsOffset, objData.CountBytes);
+                objData.EmitBytes(sequencePointsBuilder.ToObjectData().Data);
+
+                objData.EmitInt(reservedStringOffset, objData.CountBytes);
+                foreach (var kvp in fileNameToOffset.OrderBy(x => x.Value))
+                {
+                    var bytes = Encoding.UTF8.GetBytes(kvp.Key);
+                    objData.EmitInt(bytes.Length);
+                    objData.EmitBytes(bytes);
+                }
             }
+            else
+            {
+                objData.EmitInt(reservedSequencePointsOffset, -1);
+                objData.EmitInt(reservedStringOffset, -1);
+            }
+
+            Console.WriteLine("TotalSequencePoints: " + totalSequencePoints);
+            Console.WriteLine("TotalStrings: " + fileNameToOffset.Count);
 
             _endSymbol.SetSymbolOffset(objData.CountBytes);
             return objData.ToObjectData();

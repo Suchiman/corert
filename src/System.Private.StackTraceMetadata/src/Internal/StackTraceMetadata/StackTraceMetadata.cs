@@ -93,7 +93,7 @@ namespace Internal.StackTraceMetadata
             {
                 return key.GetHashCode();
             }
-    
+
             /// <summary>
             /// Given a value, compute a hash code which would be identical to the hash code
             /// for a key which should look up this value. This function must be thread safe.
@@ -103,7 +103,7 @@ namespace Internal.StackTraceMetadata
             {
                 return GetKeyHashCode(value.ModuleAddress);
             }
-    
+
             /// <summary>
             /// Compare a key and value. If the key refers to this value, return true.
             /// This function must be thread safe.
@@ -112,7 +112,7 @@ namespace Internal.StackTraceMetadata
             {
                 return key == value.ModuleAddress;
             }
-    
+
             /// <summary>
             /// Compare a value with another value. Return true if values are equal.
             /// This function must be thread safe.
@@ -121,7 +121,7 @@ namespace Internal.StackTraceMetadata
             {
                 return value1.ModuleAddress == value2.ModuleAddress;
             }
-    
+
             /// <summary>
             /// Create a new value from a key. Must be threadsafe. Value may or may not be added
             /// to collection. Return value must not be null.
@@ -149,11 +149,6 @@ namespace Internal.StackTraceMetadata
         private sealed class PerModuleMethodNameResolver
         {
             /// <summary>
-            /// Start address of the module in question.
-            /// </summary>
-            private readonly IntPtr _moduleAddress;
-            
-            /// <summary>
             /// Dictionary mapping method RVA's to tokens within the metadata blob.
             /// </summary>
             private readonly Dictionary<int, nuint> _methodRvaToTokenMap;
@@ -174,20 +169,19 @@ namespace Internal.StackTraceMetadata
             private readonly unsafe int* _stringHeap;
 
             /// <summary>
-            /// Publicly exposed module address property.
+            /// Start address of the module in question.
             /// </summary>
-            public IntPtr ModuleAddress { get { return _moduleAddress; } }
+            public IntPtr ModuleAddress { get; }
 
             /// <summary>
             /// Construct the per-module resolver by looking up the necessary blobs.
             /// </summary>
             public unsafe PerModuleMethodNameResolver(IntPtr moduleAddress)
             {
-                _moduleAddress = moduleAddress;
+                ModuleAddress = moduleAddress;
 
                 TypeManagerHandle handle = new TypeManagerHandle(moduleAddress);
-                ModuleInfo moduleInfo;
-                if (!ModuleList.Instance.TryGetModuleInfoByHandle(handle, out moduleInfo))
+                if (!ModuleList.Instance.TryGetModuleInfoByHandle(handle, out ModuleInfo moduleInfo))
                 {
                     // Module not found
                     return;
@@ -200,24 +194,18 @@ namespace Internal.StackTraceMetadata
                     return;
                 }
 
-                byte *metadataBlob;
-                uint metadataBlobSize;
-
-                byte *rvaToTokenMapBlob;
-                uint rvaToTokenMapBlobSize;
-                
                 if (nativeFormatModuleInfo.TryFindBlob(
 #if PROJECTN
                         (int)ReflectionMapBlob.BlobIdStackTraceEmbeddedMetadata,
 #else
                         (int)ReflectionMapBlob.EmbeddedMetadata,
 #endif
-                        out metadataBlob,
-                        out metadataBlobSize) &&
+                        out byte* metadataBlob,
+                        out uint metadataBlobSize) &&
                     nativeFormatModuleInfo.TryFindBlob(
                         (int)ReflectionMapBlob.BlobIdStackTraceMethodRvaToTokenMapping,
-                        out rvaToTokenMapBlob,
-                        out rvaToTokenMapBlobSize))
+                        out byte* rvaToTokenMapBlob,
+                        out uint rvaToTokenMapBlobSize))
                 {
                     _metadataReader = new MetadataReader(new IntPtr(metadataBlob), (int)metadataBlobSize);
 
@@ -226,22 +214,26 @@ namespace Internal.StackTraceMetadata
                     int sequencePointOffset = rvaToTokenMap[1];
                     int stringHeapOffset = rvaToTokenMap[2];
 
-                    _sequencePointTable = (int*)(rvaToTokenMapBlob + sequencePointOffset);
-                    _stringHeap = (int*)(rvaToTokenMapBlob + stringHeapOffset);
+                    if (sequencePointOffset != -1)
+                    {
+                        _sequencePointTable = (int*)(rvaToTokenMapBlob + sequencePointOffset);
+                        _stringHeap = (int*)(rvaToTokenMapBlob + stringHeapOffset);
+                    }
 
                     _methodRvaToTokenMap = new Dictionary<int, nuint>(rvaToTokenMapEntryCount);
-                    PopulateRvaToTokenMap(handle, &rvaToTokenMap[3], rvaToTokenMapEntryCount);
+                    PopulateRvaToTokenMap(handle, &rvaToTokenMap[3], rvaToTokenMapEntryCount, sequencePointOffset != -1);
                 }
             }
-            
+
             /// <summary>
             /// Construct the dictionary mapping method RVAs to stack trace metadata tokens
             /// within a single binary module.
             /// </summary>
             /// <param name="rvaToTokenMap">List of RVA - token pairs</param>
             /// <param name="entryCount">Number of the RVA - token pairs in the list</param>
-            private unsafe void PopulateRvaToTokenMap(TypeManagerHandle handle, int *rvaToTokenMap, int entryCount)
+            private unsafe void PopulateRvaToTokenMap(TypeManagerHandle handle, int* rvaToTokenMap, int entryCount, bool hasSequencePoints)
             {
+                int skippingOffset = hasSequencePoints ? 2 : 1; // do we just skip to the next element or do we skip over sequencePointsOffset
                 for (int entryIndex = 0; entryIndex < entryCount; entryIndex++)
                 {
 #if PROJECTN
@@ -252,7 +244,7 @@ namespace Internal.StackTraceMetadata
                     int methodRva = (int)((nuint)pointer - (nuint)handle.OsModuleBase);
 #endif
                     nuint tokenAddress = (nuint)rvaToTokenMap;
-                    rvaToTokenMap += 2; // skipping sequence point offset
+                    rvaToTokenMap += skippingOffset;
                     _methodRvaToTokenMap[methodRva] = tokenAddress;
                 }
             }
@@ -283,6 +275,11 @@ namespace Internal.StackTraceMetadata
 
                 methodName = MethodNameFormatter.FormatMethodName(_metadataReader, Handle.FromIntToken(rawToken));
                 if (offset == -1) // short circuit if we're not trying to get line numbers
+                {
+                    return true;
+                }
+
+                if (_sequencePointTable == default) // this module doesn't have sequence points
                 {
                     return true;
                 }

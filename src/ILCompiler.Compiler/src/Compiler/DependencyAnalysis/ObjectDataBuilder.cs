@@ -166,6 +166,41 @@ namespace ILCompiler.DependencyAnalysis
             }
         }
 
+        public void EmitCompressedInt(int emit)
+        {
+            unchecked
+            {
+                const int b6 = (1 << 6) - 1;
+                const int b13 = (1 << 13) - 1;
+                const int b28 = (1 << 28) - 1;
+
+                // 0xffffffff for negative value
+                // 0x00000000 for non-negative
+                int signMask = emit >> 31;
+
+                if ((emit & ~b6) == (signMask & ~b6))
+                {
+                    int n = ((emit & b6) << 1) | (signMask & 1);
+                    EmitByte((byte)n);
+                }
+                else if ((emit & ~b13) == (signMask & ~b13))
+                {
+                    int n = ((emit & b13) << 1) | (signMask & 1);
+                    EmitShort((short)(0x8000 | n));
+                }
+                else if ((emit & ~b28) == (signMask & ~b28))
+                {
+                    int n = ((emit & b28) << 1) | (signMask & 1);
+                    EmitUInt(0xc0000000 | (uint)n);
+                }
+                else
+                {
+                    throw new ArgumentOutOfRangeException();
+                    //Throw.ValueArgumentOutOfRange();
+                }
+            }
+        }
+
         public void EmitBytes(byte[] bytes)
         {
             _data.Append(bytes);
