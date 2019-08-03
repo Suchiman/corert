@@ -199,7 +199,7 @@ namespace ILCompiler.DependencyAnalysis
         }
 
         [DllImport(NativeObjectWriterFileName)]
-        private static extern void EmitWinFrameInfo(IntPtr objWriter, byte[] methodName, int startOffset, int endOffset, 
+        private static extern void EmitWinFrameInfo(IntPtr objWriter, byte[] methodName, int startOffset, int endOffset,
                                                     byte[] blobSymbolName);
         public void EmitWinFrameInfo(int startOffset, int endOffset, int blobSize, byte[] blobSymbolName)
         {
@@ -360,16 +360,11 @@ namespace ILCompiler.DependencyAnalysis
         public void EmitDebugVarInfo(ObjectNode node)
         {
             // No interest if it's not a debug node.
-            var nodeWithDebugInfo = node as INodeWithDebugInfo;
-            if (nodeWithDebugInfo != null)
+            if (node is INodeWithDebugInfo { DebugVarInfos: { } vars })
             {
-                DebugVarInfo[] vars = nodeWithDebugInfo.DebugVarInfos;
-                if (vars != null)
+                foreach (var v in vars)
                 {
-                    foreach (var v in vars)
-                    {
-                        EmitDebugVar(v);
-                    }
+                    EmitDebugVar(v);
                 }
             }
         }
@@ -384,16 +379,11 @@ namespace ILCompiler.DependencyAnalysis
 
         public void EmitDebugEHClauseInfo(ObjectNode node)
         {
-            var nodeWithCodeInfo = node as INodeWithCodeInfo;
-            if (nodeWithCodeInfo != null)
+            if (node is INodeWithCodeInfo { DebugEHClauseInfos: { } clauses })
             {
-                DebugEHClauseInfo[] clauses = nodeWithCodeInfo.DebugEHClauseInfos;
-                if (clauses != null)
+                foreach (var clause in clauses)
                 {
-                    foreach (var clause in clauses)
-                    {
-                        EmitDebugEHClause(clause);
-                    }
+                    EmitDebugEHClause(clause);
                 }
             }
         }
@@ -404,8 +394,7 @@ namespace ILCompiler.DependencyAnalysis
         {
             uint methodTypeIndex = 0;
 
-            var methodNode = node as IMethodNode;
-            if (methodNode != null)
+            if (node is IMethodNode methodNode)
             {
                 methodTypeIndex = _userDefinedTypeDescriptor.GetMethodFunctionIdTypeIndex(methodNode.Method);
             }
@@ -444,18 +433,14 @@ namespace ILCompiler.DependencyAnalysis
             int fileId = 1;
             foreach (DependencyNode node in nodes)
             {
-                if (node is INodeWithDebugInfo)
+                if (node is INodeWithDebugInfo { DebugLocInfos: { } debugLocInfos })
                 {
-                    DebugLocInfo[] debugLocInfos = ((INodeWithDebugInfo)node).DebugLocInfos;
-                    if (debugLocInfos != null)
+                    foreach (DebugLocInfo debugLocInfo in debugLocInfos)
                     {
-                        foreach (DebugLocInfo debugLocInfo in debugLocInfos)
+                        string fileName = debugLocInfo.FileName;
+                        if (!_debugFileToId.ContainsKey(fileName))
                         {
-                            string fileName = debugLocInfo.FileName;
-                            if (!_debugFileToId.ContainsKey(fileName))
-                            {
-                                _debugFileToId.Add(fileName, fileId++);
-                            }
+                            _debugFileToId.Add(fileName, fileId++);
                         }
                     }
                 }
@@ -475,18 +460,13 @@ namespace ILCompiler.DependencyAnalysis
             }
 
             _offsetToDebugLoc.Clear();
-            INodeWithDebugInfo debugNode = node as INodeWithDebugInfo;
-            if (debugNode != null)
+            if (node is INodeWithDebugInfo { DebugLocInfos: { } locs })
             {
-                DebugLocInfo[] locs = debugNode.DebugLocInfos;
-                if (locs != null)
+                foreach (var loc in locs)
                 {
-                    foreach (var loc in locs)
-                    {
-                        Debug.Assert(!_offsetToDebugLoc.ContainsKey(loc.NativeOffset));
-                        _offsetToDebugLoc[loc.NativeOffset] = loc;
-                        _byteInterruptionOffsets.Add(loc.NativeOffset);
-                    }
+                    Debug.Assert(!_offsetToDebugLoc.ContainsKey(loc.NativeOffset));
+                    _offsetToDebugLoc[loc.NativeOffset] = loc;
+                    _byteInterruptionOffsets.Add(loc.NativeOffset);
                 }
             }
         }
@@ -494,8 +474,7 @@ namespace ILCompiler.DependencyAnalysis
 
         public void PublishUnwindInfo(ObjectNode node)
         {
-            INodeWithCodeInfo nodeWithCodeInfo = node as INodeWithCodeInfo;
-            if (nodeWithCodeInfo == null)
+            if (!(node is INodeWithCodeInfo nodeWithCodeInfo))
             {
                 return;
             }
@@ -521,7 +500,7 @@ namespace ILCompiler.DependencyAnalysis
                 int end = frameInfo.EndOffset;
                 int len = frameInfo.BlobData.Length;
                 byte[] blob = frameInfo.BlobData;
-                
+
                 _sb.Clear().Append(_nodeFactory.NameMangler.CompilationUnitPrefix).Append("_unwind").Append(i.ToStringInvariant());
 
                 byte[] blobSymbolName = _sb.Append(_currentNodeZeroTerminatedName).ToUtf8String().UnderlyingArray;
@@ -571,7 +550,7 @@ namespace ILCompiler.DependencyAnalysis
 
                 // For window, just emit the frame blob (UNWIND_INFO) as a whole.
                 EmitWinFrameInfo(start, end, len, blobSymbolName);
-                
+
                 EnsureCurrentSection();
             }
         }
@@ -584,8 +563,7 @@ namespace ILCompiler.DependencyAnalysis
             _offsetToCfiLsdaBlobName.Clear();
             _frameOpened = false;
 
-            INodeWithCodeInfo nodeWithCodeInfo = node as INodeWithCodeInfo;
-            if (nodeWithCodeInfo == null)
+            if (!(node is INodeWithCodeInfo nodeWithCodeInfo))
             {
                 return;
             }
@@ -680,8 +658,7 @@ namespace ILCompiler.DependencyAnalysis
                     // The first byte of CFI_CODE is offset from the range the frame covers.
                     // Compute code offset from the root method.
                     int codeOffset = blob[j] + start;
-                    List<byte[]> cfis;
-                    if (!_offsetToCfis.TryGetValue(codeOffset, out cfis))
+                    if (!_offsetToCfis.TryGetValue(codeOffset, out List<byte[]> cfis))
                     {
                         cfis = new List<byte[]>();
                         _offsetToCfis.Add(codeOffset, cfis);
@@ -714,8 +691,7 @@ namespace ILCompiler.DependencyAnalysis
                 else
                     EmitCFIStart(offset);
 
-                byte[] blobSymbolName;
-                if (_offsetToCfiLsdaBlobName.TryGetValue(offset, out blobSymbolName))
+                if (_offsetToCfiLsdaBlobName.TryGetValue(offset, out byte[] blobSymbolName))
                 {
                     if (_targetPlatform.Architecture == TargetArchitecture.ARM)
                         EmitARMExIdxLsda(blobSymbolName);
@@ -731,8 +707,7 @@ namespace ILCompiler.DependencyAnalysis
             }
 
             // Emit individual cfi blob for the given offset
-            List<byte[]> cfis;
-            if (_offsetToCfis.TryGetValue(offset, out cfis))
+            if (_offsetToCfis.TryGetValue(offset, out List<byte[]> cfis))
             {
                 foreach (byte[] cfi in cfis)
                 {
@@ -750,8 +725,7 @@ namespace ILCompiler.DependencyAnalysis
 
         public void EmitDebugLocInfo(int offset)
         {
-            DebugLocInfo loc;
-            if (_offsetToDebugLoc.TryGetValue(offset, out loc))
+            if (_offsetToDebugLoc.TryGetValue(offset, out DebugLocInfo loc))
             {
                 Debug.Assert(_debugFileToId.Count > 0);
                 EmitDebugLoc(offset,
@@ -775,8 +749,7 @@ namespace ILCompiler.DependencyAnalysis
                 _byteInterruptionOffsets.Add(n.Offset);
             }
 
-            var symbolNode = node as ISymbolDefinitionNode;
-            if (symbolNode != null)
+            if (node is ISymbolDefinitionNode symbolNode)
             {
                 _sb.Clear();
                 AppendExternCPrefix(_sb);
@@ -853,8 +826,7 @@ namespace ILCompiler.DependencyAnalysis
 
         public void EmitSymbolDefinition(int currentOffset)
         {
-            List<ISymbolDefinitionNode> nodes;
-            if (_offsetToDefName.TryGetValue(currentOffset, out nodes))
+            if (_offsetToDefName.TryGetValue(currentOffset, out List<ISymbolDefinitionNode> nodes))
             {
                 foreach (var name in nodes)
                 {
@@ -997,8 +969,7 @@ namespace ILCompiler.DependencyAnalysis
                 var listOfOffsets = new List<int>();
                 foreach (DependencyNode depNode in nodes)
                 {
-                    ObjectNode node = depNode as ObjectNode;
-                    if (node == null)
+                    if (!(depNode is ObjectNode node))
                         continue;
 
                     if (node.ShouldSkipEmittingObjectNode(factory))
@@ -1124,9 +1095,9 @@ namespace ILCompiler.DependencyAnalysis
                             {
                                 offsetIndex++;
                             }
-                            
+
                             int nextOffset = offsetIndex == listOfOffsets.Count ? nodeContents.Data.Length : listOfOffsets[offsetIndex];
-                            
+
                             unsafe
                             {
                                 // Todo: Use Span<T> instead once it's available to us in this repo
@@ -1136,11 +1107,11 @@ namespace ILCompiler.DependencyAnalysis
                                     i += nextOffset - i;
                                 }
                             }
-                            
+
                         }
                     }
                     Debug.Assert(i == nodeContents.Data.Length);
-                    
+
                     // It is possible to have a symbol just after all of the data.
                     objectWriter.EmitSymbolDefinition(nodeContents.Data.Length);
 
